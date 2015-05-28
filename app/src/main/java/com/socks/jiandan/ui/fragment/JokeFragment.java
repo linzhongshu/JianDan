@@ -4,7 +4,9 @@ import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
 import android.support.v4.widget.SwipeRefreshLayout;
+import android.support.v7.widget.CardView;
 import android.support.v7.widget.DefaultItemAnimator;
+import android.support.v7.widget.LinearLayoutManager;
 import android.support.v7.widget.RecyclerView;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -12,26 +14,35 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.animation.Animation;
+import android.view.animation.AnimationUtils;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.afollestad.materialdialogs.MaterialDialog;
 import com.android.volley.Response;
 import com.android.volley.VolleyError;
 import com.socks.jiandan.R;
 import com.socks.jiandan.base.BaseFragment;
+import com.socks.jiandan.cache.JokeCacheUtil;
 import com.socks.jiandan.callback.LoadFinishCallBack;
-import com.socks.jiandan.model.Comment;
+import com.socks.jiandan.constant.ToastMsg;
+import com.socks.jiandan.model.CommentNumber;
 import com.socks.jiandan.model.Joke;
 import com.socks.jiandan.model.Vote;
+import com.socks.jiandan.net.JSONParser;
 import com.socks.jiandan.net.Request4CommentCounts;
 import com.socks.jiandan.net.Request4Joke;
 import com.socks.jiandan.net.Request4Vote;
 import com.socks.jiandan.ui.CommentListActivity;
+import com.socks.jiandan.utils.NetWorkUtil;
+import com.socks.jiandan.utils.ShareUtil;
 import com.socks.jiandan.utils.ShowToast;
 import com.socks.jiandan.utils.String2TimeUtil;
+import com.socks.jiandan.utils.TextUtil;
 import com.socks.jiandan.view.AutoLoadRecyclerView;
 import com.socks.jiandan.view.googleprogressbar.GoogleProgressBar;
-import com.socks.jiandan.view.matchview.MatchTextView;
 
 import java.util.ArrayList;
 
@@ -51,13 +62,8 @@ public class JokeFragment extends BaseFragment {
 	SwipeRefreshLayout mSwipeRefreshLayout;
 	@InjectView(R.id.google_progress)
 	GoogleProgressBar google_progress;
-	@InjectView(R.id.tv_no_thing)
-	MatchTextView tv_no_thing;
-	@InjectView(R.id.tv_error)
-	MatchTextView tv_error;
 
 	private JokeAdapter mAdapter;
-	private RecyclerView.LayoutManager mLayoutManager;
 	private LoadFinishCallBack mLoadFinisCallBack;
 
 	public JokeFragment() {
@@ -67,7 +73,7 @@ public class JokeFragment extends BaseFragment {
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 		setHasOptionsMenu(true);
-		mActionBar.setTitle("段子");
+		mActionBar.setTitle(getString(R.string.title_activity_joke));
 	}
 
 	@Override
@@ -90,13 +96,13 @@ public class JokeFragment extends BaseFragment {
 				android.R.color.holo_green_light,
 				android.R.color.holo_orange_light,
 				android.R.color.holo_red_light);
-
 		mSwipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
 			@Override
 			public void onRefresh() {
 				mAdapter.loadFirst();
 			}
 		});
+		mRecyclerView.setLayoutManager(new LinearLayoutManager(getActivity()));
 
 		return view;
 	}
@@ -104,16 +110,14 @@ public class JokeFragment extends BaseFragment {
 	@Override
 	public void onActivityCreated(Bundle savedInstanceState) {
 		super.onActivityCreated(savedInstanceState);
-
 		mAdapter = new JokeAdapter();
 		mRecyclerView.setAdapter(mAdapter);
 		mAdapter.loadFirst();
-
 	}
 
 	@Override
 	public void onCreateOptionsMenu(Menu menu, MenuInflater inflater) {
-		inflater.inflate(R.menu.menu_joke, menu);
+		inflater.inflate(R.menu.menu_refresh, menu);
 	}
 
 	@Override
@@ -139,9 +143,25 @@ public class JokeFragment extends BaseFragment {
 
 		private int page;
 		private ArrayList<Joke> mJokes;
+		private int lastPosition = -1;
 
 		public JokeAdapter() {
 			mJokes = new ArrayList<Joke>();
+		}
+
+		protected void setAnimation(View viewToAnimate, int position) {
+			if (position > lastPosition) {
+				Animation animation = AnimationUtils.loadAnimation(viewToAnimate.getContext(), R
+						.anim.item_bottom_in);
+				viewToAnimate.startAnimation(animation);
+				lastPosition = position;
+			}
+		}
+
+		@Override
+		public void onViewDetachedFromWindow(ViewHolder holder) {
+			super.onViewDetachedFromWindow(holder);
+			holder.card.clearAnimation();
 		}
 
 		@Override
@@ -176,21 +196,47 @@ public class JokeFragment extends BaseFragment {
 			holder.tv_unsupport_des.setTextColor(getResources().getColor(R.color
 					.secondary_text_default_material_light));
 
+			holder.img_share.setOnClickListener(new View.OnClickListener() {
+				@Override
+				public void onClick(View v) {
+					new MaterialDialog.Builder(getActivity())
+							.items(R.array.joke_dialog)
+							.itemsCallback(new MaterialDialog.ListCallback() {
+								@Override
+								public void onSelection(MaterialDialog dialog, View view, int which, CharSequence text) {
+
+									switch (which) {
+										//分享
+										case 0:
+											ShareUtil.shareText(getActivity(), joke
+													.getComment_content().trim() + ToastMsg.SHARE_TAIL);
+											break;
+										//复制
+										case 1:
+											TextUtil.copy(getActivity(), joke.getComment_content());
+											break;
+									}
+
+								}
+							})
+							.show();
+				}
+			});
+
 			holder.ll_support.setOnClickListener(new onVoteClickListener(joke.getComment_ID(),
 					Vote.OO, holder, joke));
-
 			holder.ll_unsupport.setOnClickListener(new onVoteClickListener(joke.getComment_ID(),
 					Vote.XX, holder, joke));
-
 			holder.ll_comment.setOnClickListener(new View.OnClickListener() {
 				@Override
 				public void onClick(View v) {
-
 					Intent intent = new Intent(getActivity(), CommentListActivity.class);
 					intent.putExtra("thread_key", "comment-" + joke.getComment_ID());
 					startActivity(intent);
 				}
 			});
+
+			setAnimation(holder.card, position);
 
 		}
 
@@ -247,7 +293,7 @@ public class JokeFragment extends BaseFragment {
 							String result = response.getResult();
 
 							if (result.equals(Vote.RESULT_OO_SUCCESS)) {
-								ShowToast.Short("顶的好舒服~");
+								ShowToast.Short(ToastMsg.VOTE_OO);
 								//变红+1
 								int vote = Integer.valueOf(joke.getVote_positive());
 								joke.setVote_positive((vote + 1) + "");
@@ -259,7 +305,7 @@ public class JokeFragment extends BaseFragment {
 										(android.R.color.holo_red_light));
 
 							} else if (result.equals(Vote.RESULT_XX_SUCCESS)) {
-								ShowToast.Short("疼...轻点插");
+								ShowToast.Short(ToastMsg.VOTE_XX);
 								//变绿+1
 								int vote = Integer.valueOf(joke.getVote_negative());
 								joke.setVote_negative((vote + 1) + "");
@@ -271,16 +317,16 @@ public class JokeFragment extends BaseFragment {
 										(android.R.color.holo_green_light));
 
 							} else if (result.equals(Vote.RESULT_HAVE_VOTED)) {
-								ShowToast.Short("投过票了");
+								ShowToast.Short(ToastMsg.VOTE_REPEAT);
 							} else {
-								ShowToast.Short("卧槽，发生了什么！");
+								ShowToast.Short(ToastMsg.WHAT_HAPPEN);
 							}
 
 						}
 					}, new Response.ErrorListener() {
 				@Override
 				public void onErrorResponse(VolleyError error) {
-					ShowToast.Short("神秘力量导致投票失败");
+					ShowToast.Short(ToastMsg.VOTE_FAILED);
 					holder.isClickFinish = true;
 				}
 			}));
@@ -294,12 +340,25 @@ public class JokeFragment extends BaseFragment {
 
 		public void loadFirst() {
 			page = 1;
-			loadData();
+			loadDataByNetworkType();
 		}
 
 		public void loadNextPage() {
 			page++;
-			loadData();
+			loadDataByNetworkType();
+		}
+
+		/**
+		 * 根据不同的网络状态选择不同的加载策略
+		 */
+		private void loadDataByNetworkType() {
+
+			if (NetWorkUtil.isNetWorkConnected(getActivity())) {
+				loadData();
+			} else {
+				loadCache();
+			}
+
 		}
 
 		private void loadData() {
@@ -314,9 +373,10 @@ public class JokeFragment extends BaseFragment {
 				@Override
 				public void onErrorResponse(VolleyError error) {
 
-					tv_error.setVisibility(View.VISIBLE);
+					ShowToast.Short(ToastMsg.LOAD_FAILED);
+
 					google_progress.setVisibility(View.GONE);
-					mLoadFinisCallBack.loadFinish();
+					mLoadFinisCallBack.loadFinish(null);
 					if (mSwipeRefreshLayout.isRefreshing()) {
 						mSwipeRefreshLayout.setRefreshing(false);
 					}
@@ -324,7 +384,32 @@ public class JokeFragment extends BaseFragment {
 			}));
 		}
 
-		//获取评论数量
+		/**
+		 * 从缓存中加载
+		 */
+		private void loadCache() {
+
+			google_progress.setVisibility(View.GONE);
+			mLoadFinisCallBack.loadFinish(null);
+			if (mSwipeRefreshLayout.isRefreshing()) {
+				mSwipeRefreshLayout.setRefreshing(false);
+			}
+
+			JokeCacheUtil jokeCacheUtil = JokeCacheUtil.getInstance(getActivity());
+			if (page == 1) {
+				mJokes.clear();
+				ShowToast.Short(ToastMsg.LOAD_NO_NETWORK);
+			}
+			mJokes.addAll(jokeCacheUtil.getCacheByPage(page));
+			notifyDataSetChanged();
+
+		}
+
+		/**
+		 * 因为评论数量是使用的多说的API，所以在获取到数据之后，需要单独获取评论数量
+		 *
+		 * @param jokes
+		 */
 		private void getCommentCounts(final ArrayList<Joke> jokes) {
 
 			StringBuilder sb = new StringBuilder();
@@ -332,14 +417,19 @@ public class JokeFragment extends BaseFragment {
 				sb.append("comment-" + joke.getComment_ID() + ",");
 			}
 
-			executeRequest(new Request4CommentCounts(Comment.getCommentCountsURL(sb.toString()), new Response
-					.Listener<ArrayList<Comment>>() {
+			executeRequest(new Request4CommentCounts(CommentNumber.getCommentCountsURL(sb.toString()), new Response
+					.Listener<ArrayList<CommentNumber>>() {
 
 				@Override
-				public void onResponse(ArrayList<Comment> response) {
+				public void onResponse(ArrayList<CommentNumber> response) {
 
 					google_progress.setVisibility(View.GONE);
-					tv_error.setVisibility(View.GONE);
+
+					if (mSwipeRefreshLayout.isRefreshing()) {
+						mSwipeRefreshLayout.setRefreshing(false);
+					}
+
+					mLoadFinisCallBack.loadFinish(null);
 
 					for (int i = 0; i < jokes.size(); i++) {
 						jokes.get(i).setComment_counts(response.get(i).getComments() + "");
@@ -347,24 +437,24 @@ public class JokeFragment extends BaseFragment {
 
 					if (page == 1) {
 						mJokes.clear();
-						mJokes.addAll(jokes);
-					} else {
-						mJokes.addAll(jokes);
+						//首次正常加载之后，清空之前的缓存
+						JokeCacheUtil.getInstance(getActivity()).clearAllCache();
 					}
 
+					mJokes.addAll(jokes);
 					notifyDataSetChanged();
 
-					if (mSwipeRefreshLayout.isRefreshing()) {
-						mSwipeRefreshLayout.setRefreshing(false);
-					}
+					//加载完毕后缓存
+					JokeCacheUtil.getInstance(getActivity()).addResultCache(JSONParser.toString(jokes),
+							page);
 
-					mLoadFinisCallBack.loadFinish();
 				}
 			}, new Response.ErrorListener() {
 				@Override
 				public void onErrorResponse(VolleyError error) {
-					mLoadFinisCallBack.loadFinish();
-					tv_error.setVisibility(View.VISIBLE);
+
+					ShowToast.Short(ToastMsg.LOAD_FAILED);
+					mLoadFinisCallBack.loadFinish(null);
 					google_progress.setVisibility(View.GONE);
 					if (mSwipeRefreshLayout.isRefreshing()) {
 						mSwipeRefreshLayout.setRefreshing(false);
@@ -389,6 +479,9 @@ public class JokeFragment extends BaseFragment {
 		private TextView tv_unsupport_des;
 		private TextView tv_support_des;
 
+		private ImageView img_share;
+		private CardView card;
+
 		private LinearLayout ll_support;
 		private LinearLayout ll_unsupport;
 		private LinearLayout ll_comment;
@@ -408,6 +501,9 @@ public class JokeFragment extends BaseFragment {
 			tv_comment_count = (TextView) contentView.findViewById(R.id.tv_comment_count);
 			tv_unsupport_des = (TextView) contentView.findViewById(R.id.tv_unsupport_des);
 			tv_support_des = (TextView) contentView.findViewById(R.id.tv_support_des);
+
+			img_share = (ImageView) contentView.findViewById(R.id.img_share);
+			card = (CardView) contentView.findViewById(R.id.card);
 
 			ll_support = (LinearLayout) contentView.findViewById(R.id.ll_support);
 			ll_unsupport = (LinearLayout) contentView.findViewById(R.id.ll_unsupport);

@@ -1,6 +1,10 @@
 package com.socks.jiandan.ui;
 
-import android.net.Uri;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.support.v4.widget.SwipeRefreshLayout;
 import android.support.v7.app.ActionBar;
@@ -13,21 +17,24 @@ import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import com.afollestad.materialdialogs.MaterialDialog;
 import com.android.volley.Response;
 import com.android.volley.VolleyError;
-import com.facebook.drawee.view.SimpleDraweeView;
+import com.nostra13.universalimageloader.core.DisplayImageOptions;
+import com.nostra13.universalimageloader.core.ImageLoader;
 import com.socks.jiandan.R;
 import com.socks.jiandan.base.BaseActivity;
+import com.socks.jiandan.callback.LoadFinishCallBack;
+import com.socks.jiandan.constant.ToastMsg;
 import com.socks.jiandan.model.Commentator;
 import com.socks.jiandan.net.Request4CommentList;
 import com.socks.jiandan.utils.ShowToast;
 import com.socks.jiandan.utils.String2TimeUtil;
 import com.socks.jiandan.utils.SwipeBackUtil;
-import com.socks.jiandan.utils.TextUtil;
-import com.socks.jiandan.utils.logger.Logger;
 import com.socks.jiandan.view.floorview.FloorView;
 import com.socks.jiandan.view.floorview.SubComments;
 import com.socks.jiandan.view.floorview.SubFloorFactory;
@@ -57,8 +64,12 @@ public class CommentListActivity extends BaseActivity {
 	MatchTextView tv_error;
 
 	private String thread_key;
+	private String thread_id;
 	private CommentAdapter mAdapter;
 	private SwipeBackUtil mSwipeBackUtil;
+
+	private ImageLoader imageLoader;
+	private DisplayImageOptions options;
 
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
@@ -96,11 +107,23 @@ public class CommentListActivity extends BaseActivity {
 			}
 		});
 
+		imageLoader = ImageLoader.getInstance();
+
+		options = new DisplayImageOptions.Builder()
+				.cacheInMemory(true)
+				.cacheOnDisk(true)
+				.bitmapConfig(Bitmap.Config.RGB_565)
+				.resetViewBeforeLoading(true)
+				.showImageOnLoading(R.drawable.ic_loading_small)
+				.build();
+
 	}
 
 	@Override
 	public void initData() {
 
+		tv_no_thing.setVisibility(View.GONE);
+		google_progress.setVisibility(View.VISIBLE);
 		thread_key = getIntent().getStringExtra("thread_key");
 
 		if (TextUtils.isEmpty(thread_key) || thread_key.equals("0")) {
@@ -142,7 +165,7 @@ public class CommentListActivity extends BaseActivity {
 		@Override
 		public void onBindViewHolder(ViewHolder holder, int position) {
 
-			Commentator commentator = commentators.get(position);
+			final Commentator commentator = commentators.get(position);
 
 			switch (commentator.getType()) {
 				case Commentator.TYPE_HOT:
@@ -154,6 +177,46 @@ public class CommentListActivity extends BaseActivity {
 				case Commentator.TYPE_NORMAL:
 					holder.tv_name.setText(commentator.getName());
 					holder.tv_content.setText(commentator.getMessage());
+
+					holder.tv_content.setOnClickListener(new View.OnClickListener() {
+						@Override
+						public void onClick(View v) {
+
+							new MaterialDialog.Builder(CommentListActivity.this)
+									.title(commentator.getName())
+									.items(R.array.comment_dialog)
+									.itemsCallback(new MaterialDialog.ListCallback() {
+										@Override
+										public void onSelection(MaterialDialog dialog, View view, int which, CharSequence text) {
+
+											switch (which) {
+												//评论
+												case 0:
+													Intent intent = new Intent
+															(CommentListActivity.this,
+																	PushCommentActivity.class);
+													intent.putExtra("parent_id", commentator.getPost_id());
+													intent.putExtra("thread_id", thread_id);
+													intent.putExtra("parent_name", commentator
+															.getName());
+													startActivityForResult(intent, 0);
+													break;
+												case 1:
+													//复制到剪贴板
+													ClipboardManager clip = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+													clip.setPrimaryClip(ClipData.newPlainText
+															(null, commentator.getMessage()));
+													ShowToast.Short(ToastMsg.COPY_SUCCESS);
+													break;
+											}
+
+										}
+									})
+									.show();
+
+						}
+					});
+
 					String timeString = commentator.getCreated_at().replace("T", " ");
 					timeString = timeString.substring(0, timeString.indexOf("+"));
 					holder.tv_time.setText(String2TimeUtil.dateString2GoodExperienceFormat(timeString));
@@ -173,13 +236,7 @@ public class CommentListActivity extends BaseActivity {
 						holder.floors_parent.setVisibility(View.GONE);
 					}
 
-					if (!TextUtil.isNull(commentator.getAvatar_url())) {
-						String headerUrl = commentator.getAvatar_url();
-						Logger.d("headerUrl = " + headerUrl);
-						holder.img_header.setImageURI(Uri.parse(headerUrl));
-					} else {
-						holder.img_header.setImageURI(null);
-					}
+					imageLoader.displayImage(commentator.getAvatar_url(), holder.img_header);
 
 					break;
 			}
@@ -194,7 +251,7 @@ public class CommentListActivity extends BaseActivity {
 			}
 
 			List<String> parentIds = Arrays.asList(commentator.getParents());
-			List<Commentator> commentators = new ArrayList<>();
+			ArrayList<Commentator> commentators = new ArrayList<>();
 
 			for (Commentator comm : this.commentators) {
 
@@ -277,6 +334,11 @@ public class CommentListActivity extends BaseActivity {
 					tv_error.setVisibility(View.VISIBLE);
 					tv_no_thing.setVisibility(View.GONE);
 				}
+			}, new LoadFinishCallBack() {
+				@Override
+				public void loadFinish(Object obj) {
+					thread_id = (String) obj;
+				}
 			}));
 		}
 
@@ -289,8 +351,7 @@ public class CommentListActivity extends BaseActivity {
 		private TextView tv_content;
 		private TextView tv_time;
 		private LinearLayout ll_vote;
-		private SimpleDraweeView img_header;
-
+		private ImageView img_header;
 		private FloorView floors_parent;
 
 		private TextView tv_flag;
@@ -301,7 +362,7 @@ public class CommentListActivity extends BaseActivity {
 			tv_content = (TextView) itemView.findViewById(R.id.tv_content);
 			tv_time = (TextView) itemView.findViewById(R.id.tv_time);
 			ll_vote = (LinearLayout) itemView.findViewById(R.id.ll_vote);
-			img_header = (SimpleDraweeView) itemView.findViewById(R.id.img_header);
+			img_header = (ImageView) itemView.findViewById(R.id.img_header);
 			floors_parent = (FloorView) itemView.findViewById(R.id.floors_parent);
 
 			tv_flag = (TextView) itemView.findViewById(R.id.tv_flag);
@@ -309,6 +370,16 @@ public class CommentListActivity extends BaseActivity {
 			setIsRecyclable(false);
 
 		}
+	}
+
+	@Override
+	protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+		super.onActivityResult(requestCode, resultCode, data);
+
+		if (resultCode == RESULT_OK) {
+			initData();
+		}
+
 	}
 
 	@Override
@@ -325,7 +396,9 @@ public class CommentListActivity extends BaseActivity {
 				finish();
 				return true;
 			case R.id.action_edit:
-				ShowToast.Short("发表评论");
+				Intent intent = new Intent(this, PushCommentActivity.class);
+				intent.putExtra("thread_id", thread_id);
+				startActivityForResult(intent, 0);
 				return true;
 		}
 
